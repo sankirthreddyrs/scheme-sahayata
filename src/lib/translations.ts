@@ -62,9 +62,6 @@ export const translations: Record<string, Record<Language, string>> = {
   "btn.submit": { en: "Check My Eligibility →", hi: "मेरी पात्रता जाँचें →" },
   "btn.back": { en: "Back", hi: "वापस" },
 
-  "voice.label": { en: "Or speak your details in Kannada / Hindi", hi: "या कन्नड़ / हिंदी में अपना विवरण बोलें" },
-  "voice.recording": { en: "Listening...", hi: "सुन रहे हैं..." },
-
   "loading.text": { en: "Checking 9 schemes for you...", hi: "आपके लिए 9 योजनाओं की जाँच हो रही है..." },
 
   "schemes.title": { en: "Choose a Scheme", hi: "योजना चुनें" },
@@ -79,6 +76,8 @@ export const translations: Record<string, Record<Language, string>> = {
   "results.tryInstead": { en: "Try Instead:", hi: "इसके बजाय प्रयास करें:" },
   "results.download": { en: "Download Eligibility Card", hi: "पात्रता कार्ड डाउनलोड करें" },
   "results.startOver": { en: "Start Over", hi: "फिर से शुरू करें" },
+  "results.requiredDocs": { en: "Required Documents", hi: "आवश्यक दस्तावेज" },
+  "results.steps": { en: "Application Steps", hi: "आवेदन के चरण" },
 
   "yes": { en: "Yes", hi: "हाँ" },
   "no": { en: "No", hi: "नहीं" },

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mic, MicOff, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { useLanguage } from "@/lib/LanguageContext";
-import { indianStates, schemes } from "@/lib/schemes";
+import { indianStates, schemes, stateDistricts } from "@/lib/schemes";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -47,6 +47,48 @@ const schemeNames = [
   "PM-JAY", "PDS", "NRLM", "ICDS",
 ];
 
+// ─── KEY FIX: maps n8n response to what Results.tsx expects ───────────────────
+const normalizeResults = (raw: any): Array<{
+  scheme: string;
+  eligible: boolean;
+  reason: string;
+  gap: string | null;
+  alternate: string | null;
+}> => {
+  console.log("RAW n8n response:", JSON.stringify(raw, null, 2));
+
+  // n8n "Respond to Webhook" wraps each item like: [{json: {...}}, ...]
+  // But sometimes it returns flat array or a single object
+  let items: any[] = [];
+
+  if (Array.isArray(raw)) {
+    items = raw;
+  } else if (raw?.results) {
+    // Direct Gemini format: { results: [...] }
+    items = raw.results;
+  } else {
+    items = [raw];
+  }
+
+  return items.map((item: any) => {
+    // Unwrap n8n's {json: {...}} wrapper if present
+    const r = item?.json ?? item;
+
+    return {
+      // n8n saves as scheme_name, Gemini returns as scheme — handle both
+      scheme: r.scheme_name || r.scheme || "Unknown Scheme",
+      // n8n saves as is_eligible, Gemini returns as eligible — handle both
+      eligible: r.is_eligible ?? r.eligible ?? false,
+      // n8n saves gap_analysis as reason, Gemini returns reason
+      reason: r.reason || r.gap_analysis || "No details available",
+      // gap_analysis is the "what you are missing" text
+      gap: r.gap_analysis || r.gap || null,
+      // recommendation is the "try this instead" text
+      alternate: r.recommendation || r.alternate || null,
+    };
+  }).filter(r => r.scheme !== "Unknown Scheme" || items.length === 1);
+};
+
 const ScreenForm: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -58,7 +100,7 @@ const ScreenForm: React.FC = () => {
   const [form, setForm] = useState<FormData>({ ...defaultForm, scheme_selected: schemeParam || undefined });
   const [loading, setLoading] = useState(false);
   const [loadingScheme, setLoadingScheme] = useState(0);
-  const [isRecording, setIsRecording] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const totalSteps = isSingleScheme ? 1 : 3;
 
@@ -75,82 +117,57 @@ const ScreenForm: React.FC = () => {
     return () => clearInterval(interval);
   }, [loading]);
 
-  const handleVoice = () => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert("Speech recognition not supported in this browser.");
+  const handleSubmit = async () => {
+    // Basic validation
+    if (!form.full_name.trim()) {
+      setError("Please enter your full name before submitting.");
       return;
     }
-    const recognition = new SpeechRecognition();
-    recognition.lang = "kn-IN";
-    recognition.continuous = false;
-    recognition.interimResults = false;
+    if (!form.age) {
+      setError("Please enter your age before submitting.");
+      return;
+    }
+    if (form.owns_land && (!form.land_owned_acres || Number(form.land_owned_acres) <= 0)) {
+      setError("Please enter your land area in acres (must be greater than 0).");
+      return;
+    }
 
-    recognition.onstart = () => setIsRecording(true);
-    recognition.onend = () => setIsRecording(false);
-    recognition.onerror = () => {
-      recognition.lang = "hi-IN";
-      recognition.start();
-    };
-
-    recognition.onresult = async (event: any) => {
-      const transcript = event.results[0][0].transcript;
-      setIsRecording(false);
-      try {
-        const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-        if (!apiKey) return;
-        const resp = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [{
-                parts: [{
-                  text: `Extract the following fields from this voice transcript and return only JSON: full_name, age, gender, state, district, annual_income, caste_category, is_bpl, has_ration_card, has_bank_account, family_size, occupation, land_owned_acres, has_pucca_house, is_farmer, has_disability, is_pregnant_or_lactating. Transcript: ${transcript}`,
-                }],
-              }],
-            }),
-          }
-        );
-        const data = await resp.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          setForm(prev => ({
-            ...prev,
-            ...Object.fromEntries(
-              Object.entries(parsed).filter(([_, v]) => v !== null && v !== undefined && v !== "")
-                .map(([k, v]) => [k, typeof v === "boolean" ? v : String(v)])
-            ),
-          }));
-        }
-      } catch (e) {
-        console.error("Voice parse error:", e);
-      }
-    };
-
-    recognition.start();
-  };
-
-  const handleSubmit = async () => {
+    setError(null);
     setLoading(true);
+
     try {
       const payload: Record<string, any> = {
-        ...form,
+        full_name: form.full_name,
         age: Number(form.age),
+        gender: form.gender,
+        state: form.state,
+        district: form.district,
+        caste_category: form.caste_category,
         annual_income: Number(form.annual_income),
+        is_bpl: form.is_bpl,
+        has_ration_card: form.has_ration_card,
+        has_bank_account: form.has_bank_account,
         family_size: Number(form.family_size),
+        occupation: form.occupation,
         land_owned_acres: form.owns_land ? Number(form.land_owned_acres) : 0,
+        has_pucca_house: form.has_pucca_house,
+        is_farmer: form.is_farmer,
+        has_disability: form.has_disability,
+        is_pregnant_or_lactating: form.is_pregnant_or_lactating,
+        scheme_selected: form.scheme_selected || null,
+        input_mode: "form",
       };
+
       const webhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL;
+
+      // ── DEMO MODE (no webhook configured) ────────────────────────────────
       if (!webhookUrl || webhookUrl === "your_n8n_webhook_url_here") {
-        // Demo mode — generate fake results
         const demoResults = schemes.map((s, i) => ({
           scheme: s.name,
           eligible: i % 3 !== 2,
-          reason: i % 3 !== 2 ? "You meet all criteria for this scheme." : "Your income exceeds the limit for this scheme.",
+          reason: i % 3 !== 2
+            ? "You meet all criteria for this scheme."
+            : "Your income exceeds the limit for this scheme.",
           gap: i % 3 === 2 ? "Your income is ₹50,000 above the limit" : null,
           alternate: i % 3 === 2 ? schemes[(i + 1) % schemes.length].name : null,
         }));
@@ -159,24 +176,45 @@ const ScreenForm: React.FC = () => {
         navigate("/results");
         return;
       }
+
+      // ── REAL n8n CALL ─────────────────────────────────────────────────────
       const response = await fetch(webhookUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const result = await response.json();
-      sessionStorage.setItem("results", JSON.stringify(result));
+
+      if (!response.ok) {
+        throw new Error(`n8n returned status ${response.status}`);
+      }
+
+      const raw = await response.json();
+
+      // Normalize whatever n8n sends into the shape Results.tsx needs
+      const normalized = normalizeResults(raw);
+
+      if (normalized.length === 0) {
+        throw new Error("No results returned from the server.");
+      }
+
+      sessionStorage.setItem("results", JSON.stringify(normalized));
       sessionStorage.setItem("applicantName", form.full_name || "Applicant");
+      sessionStorage.setItem("targetScheme", form.scheme_selected || "");
       navigate("/results");
-    } catch (e) {
+
+    } catch (e: any) {
       console.error("Submit error:", e);
-      alert("Failed to check eligibility. Please try again.");
+      setError(`Failed to check eligibility: ${e.message || "Please try again."}`);
     } finally {
       setLoading(false);
     }
   };
 
-  const ToggleField = ({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) => (
+  const ToggleField = ({
+    label, value, onChange,
+  }: {
+    label: string; value: boolean; onChange: (v: boolean) => void;
+  }) => (
     <div className="flex items-center justify-between gap-4 rounded-lg border border-border p-4">
       <Label className="text-sm font-medium cursor-pointer flex-1">{label}</Label>
       <Switch checked={value} onCheckedChange={onChange} />
@@ -187,13 +225,24 @@ const ScreenForm: React.FC = () => {
     <div className="space-y-4">
       <h2 className="font-display text-lg font-semibold">{t("step1.title")}</h2>
       <div>
-        <Label>{t("field.name")}</Label>
-        <Input value={form.full_name} onChange={e => set("full_name", e.target.value)} placeholder="Enter full name" />
+        <Label>{t("field.name")} *</Label>
+        <Input
+          value={form.full_name}
+          onChange={e => set("full_name", e.target.value)}
+          placeholder="Enter full name"
+        />
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <Label>{t("field.age")}</Label>
-          <Input type="number" value={form.age} onChange={e => set("age", e.target.value)} placeholder="25" />
+          <Label>{t("field.age")} *</Label>
+          <Input
+            type="number"
+            value={form.age}
+            onChange={e => set("age", e.target.value)}
+            placeholder="25"
+            min={1}
+            max={120}
+          />
         </div>
         <div>
           <Label>{t("field.gender")}</Label>
@@ -209,7 +258,13 @@ const ScreenForm: React.FC = () => {
       </div>
       <div>
         <Label>{t("field.state")}</Label>
-        <Select value={form.state} onValueChange={v => set("state", v)}>
+        <Select 
+          value={form.state} 
+          onValueChange={v => {
+            set("state", v);
+            set("district", ""); // Clear district when state changes
+          }}
+        >
           <SelectTrigger><SelectValue placeholder="Select state" /></SelectTrigger>
           <SelectContent>
             {indianStates.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
@@ -218,7 +273,22 @@ const ScreenForm: React.FC = () => {
       </div>
       <div>
         <Label>{t("field.district")}</Label>
-        <Input value={form.district} onChange={e => set("district", e.target.value)} placeholder="Enter district" />
+        {form.state && stateDistricts[form.state] ? (
+          <Select value={form.district} onValueChange={v => set("district", v)}>
+            <SelectTrigger><SelectValue placeholder="Select district" /></SelectTrigger>
+            <SelectContent>
+              {stateDistricts[form.state].map(d => (
+                <SelectItem key={d} value={d}>{d}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <Input
+            value={form.district}
+            onChange={e => set("district", e.target.value)}
+            placeholder="Enter district"
+          />
+        )}
       </div>
       <div>
         <Label>{t("field.caste")}</Label>
@@ -239,15 +309,27 @@ const ScreenForm: React.FC = () => {
     <div className="space-y-4">
       <h2 className="font-display text-lg font-semibold">{t("step2.title")}</h2>
       <div>
-        <Label>{t("field.income")}</Label>
-        <Input type="number" value={form.annual_income} onChange={e => set("annual_income", e.target.value)} placeholder="e.g. 100000" />
+        <Label>{t("field.income")} *</Label>
+        <Input
+          type="number"
+          value={form.annual_income}
+          onChange={e => set("annual_income", e.target.value)}
+          placeholder="e.g. 100000"
+          min={0}
+        />
       </div>
       <ToggleField label={t("field.bpl")} value={form.is_bpl} onChange={v => set("is_bpl", v)} />
       <ToggleField label={t("field.ration")} value={form.has_ration_card} onChange={v => set("has_ration_card", v)} />
       <ToggleField label={t("field.bank")} value={form.has_bank_account} onChange={v => set("has_bank_account", v)} />
       <div>
-        <Label>{t("field.familySize")}</Label>
-        <Input type="number" value={form.family_size} onChange={e => set("family_size", e.target.value)} placeholder="e.g. 5" />
+        <Label>{t("field.familySize")} *</Label>
+        <Input
+          type="number"
+          value={form.family_size}
+          onChange={e => set("family_size", e.target.value)}
+          placeholder="e.g. 5"
+          min={1}
+        />
       </div>
       <div>
         <Label>{t("field.occupation")}</Label>
@@ -273,33 +355,23 @@ const ScreenForm: React.FC = () => {
       {form.owns_land && (
         <div className="ml-4">
           <Label>{t("field.landAcres")}</Label>
-          <Input type="number" value={form.land_owned_acres} onChange={e => set("land_owned_acres", e.target.value)} placeholder="e.g. 2" />
+          <Input
+            type="number"
+            value={form.land_owned_acres}
+            onChange={e => set("land_owned_acres", e.target.value)}
+            placeholder="e.g. 2"
+            min={0}
+          />
         </div>
       )}
       <ToggleField label={t("field.puccaHouse")} value={form.has_pucca_house} onChange={v => set("has_pucca_house", v)} />
       <ToggleField label={t("field.farmer")} value={form.is_farmer} onChange={v => set("is_farmer", v)} />
       <ToggleField label={t("field.disability")} value={form.has_disability} onChange={v => set("has_disability", v)} />
       <ToggleField label={t("field.pregnant")} value={form.is_pregnant_or_lactating} onChange={v => set("is_pregnant_or_lactating", v)} />
-
-      {/* Voice Input */}
-      <div className="mt-6 flex flex-col items-center gap-3">
-        <button
-          onClick={handleVoice}
-          className={`relative rounded-full p-5 transition-colors ${
-            isRecording ? "bg-destructive text-destructive-foreground" : "bg-primary text-primary-foreground"
-          }`}
-        >
-          {isRecording && <span className="absolute inset-0 rounded-full bg-destructive animate-pulse-ring" />}
-          {isRecording ? <MicOff className="h-8 w-8 relative z-10" /> : <Mic className="h-8 w-8" />}
-        </button>
-        <p className="text-sm text-muted-foreground text-center">
-          {isRecording ? t("voice.recording") : t("voice.label")}
-        </p>
-      </div>
     </div>
   );
 
-  // Loading overlay
+  // ── Loading overlay ────────────────────────────────────────────────────────
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6">
@@ -326,7 +398,7 @@ const ScreenForm: React.FC = () => {
           </div>
         )}
 
-        {/* Progress */}
+        {/* Progress bar */}
         {!isSingleScheme && (
           <div className="mb-6">
             <div className="flex justify-between text-sm text-muted-foreground mb-2">
@@ -334,6 +406,13 @@ const ScreenForm: React.FC = () => {
               <span>{Math.round((step / totalSteps) * 100)}%</span>
             </div>
             <Progress value={(step / totalSteps) * 100} className="h-2" />
+          </div>
+        )}
+
+        {/* Error banner */}
+        {error && (
+          <div className="mb-4 rounded-lg bg-destructive/10 border border-destructive/30 p-3 text-sm text-destructive">
+            {error}
           </div>
         )}
 
@@ -361,14 +440,34 @@ const ScreenForm: React.FC = () => {
           </motion.div>
         </AnimatePresence>
 
+        {/* Navigation buttons */}
         <div className="flex gap-3 mt-8">
           {!isSingleScheme && step > 1 && (
-            <Button variant="outline" onClick={() => setStep(s => s - 1)} className="flex-1">
+            <Button
+              variant="outline"
+              onClick={() => { setError(null); setStep(s => s - 1); }}
+              className="flex-1"
+            >
               {t("btn.prev")}
             </Button>
           )}
           {!isSingleScheme && step < totalSteps ? (
-            <Button onClick={() => setStep(s => s + 1)} className="flex-1">
+            <Button
+              onClick={() => {
+                // Step-level validation before advancing
+                if (step === 1 && (!form.full_name.trim() || !form.age)) {
+                  setError("Please enter at least your name and age to continue.");
+                  return;
+                }
+                if (step === 2 && !form.annual_income) {
+                  setError("Please enter your annual income to continue.");
+                  return;
+                }
+                setError(null);
+                setStep(s => s + 1);
+              }}
+              className="flex-1"
+            >
               {t("btn.next")}
             </Button>
           ) : (
