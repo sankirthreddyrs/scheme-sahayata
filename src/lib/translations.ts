@@ -7,7 +7,7 @@ export const translations: Record<string, Record<Language, string>> = {
   "footer.text": { en: "Powered by AI — Free to use — Your data is private", hi: "AI द्वारा संचालित — मुफ्त — आपका डेटा सुरक्षित है" },
 
   "card1.title": { en: "Am I eligible?", hi: "क्या मैं पात्र हूँ?" },
-  "card1.subtitle": { en: "Answer a few questions and we will check all 9 government schemes for you automatically", hi: "कुछ सवालों के जवाब दें और हम स्वचालित रूप से 9 सरकारी योजनाओं की जाँच करेंगे" },
+  "card1.subtitle": { en: "Answer a few questions and we will check 20 government schemes for you automatically", hi: "कुछ सवालों के जवाब दें और हम स्वचालित रूप से 20 सरकारी योजनाओं की जाँच करेंगे" },
   "card1.button": { en: "Start Screening", hi: "जाँच शुरू करें" },
   "card1.heading": { en: "Check My Eligibility", hi: "मेरी पात्रता जाँचें" },
 
@@ -17,7 +17,7 @@ export const translations: Record<string, Record<Language, string>> = {
   "card2.heading": { en: "Apply for a Scheme", hi: "योजना के लिए आवेदन" },
 
   "screen.title": { en: "Tell us about yourself", hi: "अपने बारे में बताएं" },
-  "screen.subtitle": { en: "We will check all 9 schemes in seconds", hi: "हम सेकंडों में 9 योजनाओं की जाँच करेंगे" },
+  "screen.subtitle": { en: "We will check 20 schemes in seconds", hi: "हम सेकंडों में 20 योजनाओं की जाँच करेंगे" },
   "step1.title": { en: "Personal Details", hi: "व्यक्तिगत विवरण" },
   "step2.title": { en: "Economic Details", hi: "आर्थिक विवरण" },
   "step3.title": { en: "Property & Special Categories", hi: "संपत्ति और विशेष श्रेणियाँ" },
@@ -62,10 +62,14 @@ export const translations: Record<string, Record<Language, string>> = {
   "btn.submit": { en: "Check My Eligibility →", hi: "मेरी पात्रता जाँचें →" },
   "btn.back": { en: "Back", hi: "वापस" },
 
-  "loading.text": { en: "Checking 9 schemes for you...", hi: "आपके लिए 9 योजनाओं की जाँच हो रही है..." },
+  "loading.text": { en: "Checking 20 schemes for you...", hi: "आपके लिए 20 योजनाओं की जाँच हो रही है..." },
 
   "schemes.title": { en: "Choose a Scheme", hi: "योजना चुनें" },
+  "schemes.search": { en: "Search for a scheme...", hi: "योजना खोजें..." },
+  "schemes.noResults": { en: "No results found for your search.", hi: "आपकी खोज के लिए कोई परिणाम नहीं मिला।" },
   "schemes.check": { en: "Check Eligibility →", hi: "पात्रता जाँचें →" },
+  "schemes.listening": { en: "Listening...", hi: "सुन रहे हैं..." },
+  "schemes.couldNotListen": { en: "Could not listen. Try again.", hi: "सुन नहीं पाए। फिर से प्रयास करें।" },
 
   "results.eligible": { en: "You qualify for {count} schemes!", hi: "आप {count} योजनाओं के लिए पात्र हैं!" },
   "results.none": { en: "You don't qualify yet — but here's why", hi: "आप अभी पात्र नहीं हैं — लेकिन यहाँ कारण है" },
@@ -83,6 +87,11 @@ export const translations: Record<string, Record<Language, string>> = {
   "no": { en: "No", hi: "नहीं" },
   "step": { en: "Step", hi: "चरण" },
   "of": { en: "of", hi: "का" },
+
+  "chatbot.name": { en: "SahayataAI", hi: "सहायता एआई" },
+  "chatbot.welcome": { en: "Hello! I am SahayataAI. How can I help you with government schemes today?", hi: "नमस्ते! मैं सहायता एआई हूँ। आज मैं सरकारी योजनाओं में आपकी कैसे मदद कर सकता हूँ?" },
+  "chatbot.placeholder": { en: "Ask about a scheme...", hi: "योजना के बारे में पूछें..." },
+  "chatbot.error": { en: "Sorry, I encountered an error. Please try again.", hi: "क्षमा करें, मुझे एक त्रुटि मिली। कृपया पुनः प्रयास करें।" },
 };
 
 export const t = (key: string, lang: Language, vars?: Record<string, string>): string => {

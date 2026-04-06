@@ -23,12 +23,17 @@ const Results: React.FC = () => {
   const [results, setResults] = useState<SchemeResult[]>([]);
   const [applicantName, setApplicantName] = useState("");
   const [targetSchemeId, setTargetSchemeId] = useState<string | null>(null);
+  const [formData, setFormData] = useState<any>(null);
 
   useEffect(() => {
     const data = sessionStorage.getItem("results");
     const name = sessionStorage.getItem("applicantName");
     const target = sessionStorage.getItem("targetScheme");
+    const form = sessionStorage.getItem("formData");
 
+    if (form) {
+      try { setFormData(JSON.parse(form)); } catch (e) {}
+    }
     if (data) {
       try {
         const parsed = JSON.parse(data);
@@ -73,6 +78,75 @@ const Results: React.FC = () => {
   }, []);
 
   const eligibleCount = results.filter(r => r.eligible).length;
+
+  // Smart Reason Generator: If the response from n8n is generic, use this to explain why
+  const getSmartReason = (scheme: string, reason: string) => {
+    // If we have a specific reason already, keep it
+    if (reason && !reason.includes("meet the eligibility criteria")) return reason;
+    if (!formData) return reason;
+
+    const s = scheme.toUpperCase();
+    const income = Number(formData.annual_income || 0);
+    const age = Number(formData.age || 0);
+
+    // Common Eligibility Logic for all 20 schemes
+    if (s.includes("MGNREGA")) {
+      if (formData.occupation === "Government Employee") return lang === "hi" ? "सरकारी कर्मचारी मनरेगा के लिए पात्र नहीं हैं।" : "Government employees are not eligible for MGNREGA.";
+      if (income > 150000) return lang === "hi" ? "आपकी आय ग्रामीण रोजगार गारंटी की सीमा से अधिक है।" : "Your income exceeds the limit for rural employment guarantee.";
+    }
+
+    if (s.includes("KISAN")) {
+      if (!formData.owns_land) return lang === "hi" ? "यह योजना केवल भूमि मालिक किसानों के लिए है।" : "This scheme is only for land-owning farmers.";
+      if (income > 200000) return lang === "hi" ? "आपकी वार्षिक आय ₹2 लाख की सीमा से अधिक है।" : "Your annual income exceeds the ₹2 lakh limit.";
+      if (formData.occupation === "Government Employee") return lang === "hi" ? "सरकारी कर्मचारी और पेंशनभोगी इस योजना से बाहर हैं।" : "Government employees and pensioners are excluded from this scheme.";
+    }
+    
+    if (s.includes("PMAY") || s.includes("AWAS")) {
+      if (formData.has_pucca_house) return lang === "hi" ? "यह योजना उन लोगों के लिए है जिनके पास पक्का घर नहीं है।" : "This scheme is for those who do not own a pucca house.";
+      if (income > 300000) return lang === "hi" ? "आपकी आय प्रधानमंत्री आवास योजना की सीमा से अधिक है।" : "Your income exceeds the PMAY limit.";
+    }
+
+    if (s.includes("NSAP") || s.includes("PENSION") || s.includes("APY") || s.includes("SYM") || s.includes("KMY")) {
+      if (s.includes("APY") && (age < 18 || age > 40)) return lang === "hi" ? "अटल पेंशन योजना के लिए आयु 18 से 40 वर्ष के बीच होनी चाहिए।" : "Age must be between 18 and 40 for Atal Pension Yojana.";
+      if (s.includes("SYM") && (age < 18 || age > 40)) return lang === "hi" ? "पीएम-एसवाईएम के लिए आयु 18 से 40 वर्ष के बीच होनी चाहिए।" : "Age must be between 18 and 40 for PM-SYM.";
+      if (s.includes("KMY") && (age < 18 || age > 40)) return lang === "hi" ? "पीएम-केएमवाई के लिए आयु 18 से 40 वर्ष के बीच होनी चाहिए।" : "Age must be between 18 and 40 for PM-KMY.";
+      if (age < 60 && !formData.has_disability && formData.gender !== "Female") {
+        return lang === "hi" ? "पेंशन के लिए आपकी आयु 60 वर्ष से अधिक होनी चाहिए या विशेष श्रेणी में होना चाहिए।" : "You must be over 60 or in a special category (widow/disabled) for pension.";
+      }
+    }
+
+    if (s.includes("MATRUVANDANA") || s.includes("PMMVY") || s.includes("ICDS")) {
+      if (formData.gender === "Male") return lang === "hi" ? "यह योजना केवल महिलाओं और बच्चों के लिए है।" : "This scheme is specifically for women and children.";
+      if (!formData.is_pregnant_or_lactating && age > 6) {
+         return lang === "hi" ? "यह योजना गर्भवती महिलाओं या 6 वर्ष से कम उम्र के बच्चों के लिए है।" : "This scheme is for pregnant women or children under 6.";
+      }
+    }
+
+    if (s.includes("UJJWALA") || s.includes("PMUY")) {
+      if (!formData.is_bpl && !formData.has_ration_card) return lang === "hi" ? "यह योजना केवल BPL परिवारों या राशन कार्ड धारकों के लिए है।" : "This scheme is only for BPL households or ration card holders.";
+    }
+
+    if (s.includes("MUDRA") || s.includes("LOAN") || s.includes("SVANIDHI") || s.includes("STAND UP") || s.includes("EGP") || s.includes("VISHWAKARMA")) {
+      if (income > 500000 && !s.includes("STAND UP")) return lang === "hi" ? "आपकी आय सूक्ष्म-ऋण पात्रता के लिए बहुत अधिक है।" : "Your income is too high for micro-loan eligibility.";
+      if (s.includes("SVANIDHI") && formData.occupation !== "Self Employed") return lang === "hi" ? "यह योजना केवल स्ट्रीट वेंडर्स और स्वरोजगार के लिए है।" : "This scheme is only for street vendors and self-employed individuals.";
+      if (s.includes("STAND UP") && formData.gender === "Male" && formData.caste_category === "General") return lang === "hi" ? "स्टैंड-अप इंडिया केवल महिलाओं या SC/ST उद्यमियों के लिए है।" : "Stand-Up India is for Women or SC/ST entrepreneurs only.";
+    }
+
+    if (s.includes("SUKANYA") || s.includes("SSY")) {
+      if (formData.gender === "Male") return lang === "hi" ? "सुकन्या समृद्धि योजना केवल बालिकाओं के लिए है।" : "Sukanya Samriddhi Yojana is only for the girl child.";
+      if (age > 10) return lang === "hi" ? "खाता खोलने के समय आयु 10 वर्ष से कम होनी चाहिए।" : "Age must be below 10 years at the time of opening account.";
+    }
+
+    if (s.includes("JAY") || s.includes("AYUSHMAN")) {
+      if (!formData.is_bpl && income > 250000) return lang === "hi" ? "आयुष्मान भारत के लिए आपकी आय सीमा से अधिक है।" : "Your income exceeds the limit for Ayushman Bharat.";
+    }
+
+    if (s.includes("NRLM")) {
+      if (formData.gender === "Male") return lang === "hi" ? "एनआरएलएम मुख्य रूप से महिला स्वयं सहायता समूहों के लिए है।" : "NRLM is primarily for women self-help groups.";
+    }
+
+    return reason;
+  };
 
   // Filter results if a specific scheme was targeted
   const filteredResults = targetSchemeId 
@@ -273,8 +347,10 @@ const Results: React.FC = () => {
 
                   {/* Reason */}
                   {r.reason && (
-                    <div className="p-3 rounded-lg bg-muted/30">
-                      <p className="text-sm text-muted-foreground italic">"{r.reason}"</p>
+                    <div className={`p-3 rounded-lg ${r.eligible ? "bg-green-50/50" : "bg-red-50/50 border border-red-100"}`}>
+                      <p className={`text-sm italic ${r.eligible ? "text-green-700" : "text-red-600 font-medium"}`}>
+                        "{getSmartReason(r.scheme, r.reason)}"
+                      </p>
                     </div>
                   )}
 

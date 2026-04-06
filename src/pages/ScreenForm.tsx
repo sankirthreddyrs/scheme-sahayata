@@ -42,10 +42,7 @@ const defaultForm: FormData = {
   is_pregnant_or_lactating: false,
 };
 
-const schemeNames = [
-  "MGNREGA", "PMAY", "PMJDY", "PM-KISAN", "NSAP",
-  "PM-JAY", "PDS", "NRLM", "ICDS",
-];
+const schemeNames = schemes.map(s => s.id);
 
 // ─── Normalize whatever shape n8n returns ────────────────────────────────────
 const normalizeResults = (raw: any): Array<{
@@ -251,6 +248,7 @@ const ScreenForm: React.FC = () => {
       sessionStorage.setItem("results", JSON.stringify(normalized));
       sessionStorage.setItem("applicantName", form.full_name || "Applicant");
       sessionStorage.setItem("targetScheme", form.scheme_selected || "");
+      sessionStorage.setItem("formData", JSON.stringify(form));
       navigate("/results");
 
     } catch (e: any) {

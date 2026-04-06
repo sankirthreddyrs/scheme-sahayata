@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { LanguageProvider } from "@/lib/LanguageContext";
 import Header from "@/components/Header";
+import SahayataAI from "@/components/SahayataAI";
 import Landing from "./pages/Landing";
 import ScreenForm from "./pages/ScreenForm";
 import Schemes from "./pages/Schemes";
@@ -28,6 +29,7 @@ const App = () => (
             <Route path="/results" element={<Results />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
+          <SahayataAI />
         </BrowserRouter>
       </LanguageProvider>
     </TooltipProvider>
