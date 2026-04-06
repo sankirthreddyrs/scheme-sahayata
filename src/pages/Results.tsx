@@ -40,14 +40,22 @@ const Results: React.FC = () => {
           normalized = parsed.map((item: any) => {
             // Unwrap n8n {json: {...}} wrapper if still present
             const r = item?.json ?? item;
-            const reason = r.reason || r.gap_analysis || "";
+            const eligible = r.is_eligible ?? r.eligible ?? false;
+            const rawReason = r.reason || r.gap_analysis || "";
             const gap = r.gap_analysis || r.gap || "";
             const alternate = r.recommendation || r.alternate || "";
             
+            let finalReason = rawReason;
+            if (rawReason.toUpperCase() === "N/A" || !rawReason) {
+              finalReason = eligible 
+                ? "You meet the criteria for this scheme." 
+                : "Based on your profile, you do not meet the eligibility criteria for this scheme.";
+            }
+
             return {
               scheme: r.scheme_name || r.scheme || "Unknown",
-              eligible: r.is_eligible ?? r.eligible ?? false,
-              reason: reason.toUpperCase() === "N/A" ? "" : reason,
+              eligible,
+              reason: finalReason,
               gap: gap.toUpperCase() === "N/A" ? "" : gap,
               alternate: alternate.toUpperCase() === "N/A" ? "" : alternate,
             };

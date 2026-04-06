@@ -47,7 +47,7 @@ const schemeNames = [
   "PM-JAY", "PDS", "NRLM", "ICDS",
 ];
 
-// ─── KEY FIX: maps n8n response to what Results.tsx expects ───────────────────
+// ─── Normalize whatever shape n8n returns ────────────────────────────────────
 const normalizeResults = (raw: any): Array<{
   scheme: string;
   eligible: boolean;
@@ -57,36 +57,82 @@ const normalizeResults = (raw: any): Array<{
 }> => {
   console.log("RAW n8n response:", JSON.stringify(raw, null, 2));
 
-  // n8n "Respond to Webhook" wraps each item like: [{json: {...}}, ...]
-  // But sometimes it returns flat array or a single object
   let items: any[] = [];
 
   if (Array.isArray(raw)) {
     items = raw;
-  } else if (raw?.results) {
-    // Direct Gemini format: { results: [...] }
+  } else if (raw?.results && Array.isArray(raw.results)) {
     items = raw.results;
+  } else if (raw?.json) {
+    items = [raw];
   } else {
     items = [raw];
   }
 
-  return items.map((item: any) => {
-    // Unwrap n8n's {json: {...}} wrapper if present
-    const r = item?.json ?? item;
+  return items
+    .map((item: any) => {
+      const r = item?.json ?? item;
+      const eligible = r.is_eligible ?? r.eligible ?? false;
+      const rawReason = r.reason || r.gap_analysis || "";
+      const reason = rawReason.toUpperCase() === "N/A" || !rawReason
+        ? (eligible ? "You meet the criteria for this scheme." : "Based on your profile, you do not meet the eligibility criteria for this scheme.")
+        : rawReason;
 
-    return {
-      // n8n saves as scheme_name, Gemini returns as scheme — handle both
-      scheme: r.scheme_name || r.scheme || "Unknown Scheme",
-      // n8n saves as is_eligible, Gemini returns as eligible — handle both
-      eligible: r.is_eligible ?? r.eligible ?? false,
-      // n8n saves gap_analysis as reason, Gemini returns reason
-      reason: r.reason || r.gap_analysis || "No details available",
-      // gap_analysis is the "what you are missing" text
-      gap: r.gap_analysis || r.gap || null,
-      // recommendation is the "try this instead" text
-      alternate: r.recommendation || r.alternate || null,
-    };
-  }).filter(r => r.scheme !== "Unknown Scheme" || items.length === 1);
+      return {
+        scheme: r.scheme_name || r.scheme || "Unknown Scheme",
+        eligible,
+        reason,
+        gap: r.gap_analysis || r.gap || null,
+        alternate: r.recommendation || r.alternate || null,
+      };
+    })
+    .filter(r => r.scheme !== "Unknown Scheme" || items.length === 1);
+};
+
+// ─── Safely parse response — handles truncated / non-JSON bodies ──────────────
+const safeParseResponse = async (response: Response): Promise<any> => {
+  const text = await response.text();
+
+  if (!text || text.trim() === "") {
+    // If we get an empty body with a success status, n8n might not be sending anything back.
+    console.error("Empty response body. Status:", response.status, "Headers:", Object.fromEntries(response.headers.entries()));
+    throw new Error(`The server responded with success (HTTP ${response.status}) but returned no data. Please ensure your n8n workflow has a 'Respond to Webhook' node with data.`);
+  }
+
+  const trimmed = text.trim();
+
+  // Try direct parse first
+  try {
+    return JSON.parse(trimmed);
+  } catch (_) {
+    // Response may be a large streamed body that got cut off.
+    // Try to salvage a valid JSON array or object from the text.
+    const arrayMatch = trimmed.match(/(\[[\s\S]*\])/);
+    if (arrayMatch) {
+      try {
+        return JSON.parse(arrayMatch[1]);
+      } catch (_) {}
+    }
+
+    const objectMatch = trimmed.match(/(\{[\s\S]*\})/);
+    if (objectMatch) {
+      try {
+        return JSON.parse(objectMatch[1]);
+      } catch (_) {}
+    }
+
+    // Last resort: try to extract results array from gemini_raw_response
+    const resultsMatch = trimmed.match(/"results"\s*:\s*(\[[\s\S]*?\])\s*[,}]/);
+    if (resultsMatch) {
+      try {
+        const results = JSON.parse(resultsMatch[1]);
+        return { results };
+      } catch (_) {}
+    }
+
+    console.error("Could not parse response:", trimmed.substring(0, 500));
+    throw new Error("Received an invalid response from the server. Please try again.");
+  }
 };
 
 const ScreenForm: React.FC = () => {
@@ -108,7 +154,6 @@ const ScreenForm: React.FC = () => {
     setForm(prev => ({ ...prev, [key]: value }));
   }, []);
 
-  // Loading scheme animation
   useEffect(() => {
     if (!loading) return;
     const interval = setInterval(() => {
@@ -118,7 +163,6 @@ const ScreenForm: React.FC = () => {
   }, [loading]);
 
   const handleSubmit = async () => {
-    // Basic validation
     if (!form.full_name.trim()) {
       setError("Please enter your full name before submitting.");
       return;
@@ -160,7 +204,7 @@ const ScreenForm: React.FC = () => {
 
       const webhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL;
 
-      // ── DEMO MODE (no webhook configured) ────────────────────────────────
+      // ── DEMO MODE ─────────────────────────────────────────────────────────
       if (!webhookUrl || webhookUrl === "your_n8n_webhook_url_here") {
         const demoResults = schemes.map((s, i) => ({
           scheme: s.name,
@@ -180,21 +224,28 @@ const ScreenForm: React.FC = () => {
       // ── REAL n8n CALL ─────────────────────────────────────────────────────
       const response = await fetch(webhookUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
         body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
-        throw new Error(`n8n returned status ${response.status}`);
+        throw new Error(`Server returned status ${response.status}. Please try again.`);
       }
 
-      const raw = await response.json();
+      // ✅ KEY FIX: use safeParseResponse instead of response.json()
+      const raw = await safeParseResponse(response);
 
-      // Normalize whatever n8n sends into the shape Results.tsx needs
+      if (!raw) {
+        throw new Error("Received an empty or invalid response from the server.");
+      }
+
       const normalized = normalizeResults(raw);
 
       if (normalized.length === 0) {
-        throw new Error("No results returned from the server.");
+        throw new Error("No results returned from the server. Please try again.");
       }
 
       sessionStorage.setItem("results", JSON.stringify(normalized));
@@ -258,11 +309,11 @@ const ScreenForm: React.FC = () => {
       </div>
       <div>
         <Label>{t("field.state")}</Label>
-        <Select 
-          value={form.state} 
+        <Select
+          value={form.state}
           onValueChange={v => {
             set("state", v);
-            set("district", ""); // Clear district when state changes
+            set("district", "");
           }}
         >
           <SelectTrigger><SelectValue placeholder="Select state" /></SelectTrigger>
@@ -371,7 +422,6 @@ const ScreenForm: React.FC = () => {
     </div>
   );
 
-  // ── Loading overlay ────────────────────────────────────────────────────────
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6">
@@ -398,7 +448,6 @@ const ScreenForm: React.FC = () => {
           </div>
         )}
 
-        {/* Progress bar */}
         {!isSingleScheme && (
           <div className="mb-6">
             <div className="flex justify-between text-sm text-muted-foreground mb-2">
@@ -409,7 +458,6 @@ const ScreenForm: React.FC = () => {
           </div>
         )}
 
-        {/* Error banner */}
         {error && (
           <div className="mb-4 rounded-lg bg-destructive/10 border border-destructive/30 p-3 text-sm text-destructive">
             {error}
@@ -440,7 +488,6 @@ const ScreenForm: React.FC = () => {
           </motion.div>
         </AnimatePresence>
 
-        {/* Navigation buttons */}
         <div className="flex gap-3 mt-8">
           {!isSingleScheme && step > 1 && (
             <Button
@@ -454,7 +501,6 @@ const ScreenForm: React.FC = () => {
           {!isSingleScheme && step < totalSteps ? (
             <Button
               onClick={() => {
-                // Step-level validation before advancing
                 if (step === 1 && (!form.full_name.trim() || !form.age)) {
                   setError("Please enter at least your name and age to continue.");
                   return;
